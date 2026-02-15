@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>康乃爾筆記 CornellNote</title>
+    <script>
+        // ★★★ 替換成你的 Google Apps Script 部署網址 ★★★
+        const API_URL = 'https://script.google.com/macros/s/AKfycbwfD3GsLJs7wWZQGEIHaOS-9Em0X4YNNUEOTZ1atHsWNfOu8K_VdqGHV70i_3noeF9x/exec;
+    </script>
+    <style>
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body {
+            font-family:'Segoe UI','Microsoft JhengHei','微軟正黑體',sans-serif;
+            background:#f0ebe3; color:#2c2c2c;
+            height:100vh; display:flex; overflow:hidden;
+        }
+
+        /* ===== Loading 畫面 ===== */
+        .loading-overlay {
+            position:fixed; top:0; left:0; width:100%; height:100%;
+            background:rgba(240,235,227,.92); z-index:9999;
+            display:flex; align-items:center; justify-content:center;
+            flex-direction:column; gap:14px; transition:opacity .3s;
+        }
+        .loading-overlay.hidden { opacity:0; pointer-events:none; }
+        .spinner {
+            width:40px; height:40px; border:4px solid #ddd;
+            border-top-color:#2d5f2d; border-radius:50%;
+            animation:spin .8s linear infinite;
+        }
+        @keyframes spin { to { transform:rotate(360deg); } }
+        .loading-text { color:#8a8078; font-size:14px; }
+
+        /* ===== 同步狀態指示器 ===== */
+        .sync-status {
+            position:fixed; top:12px; right:16px; z-index:998;
+            padding:5px 12px; border-radius:20px; font-size:11px;
+            background:#e8f5e9; color:#2d5f2d; transition:all .3s;
+            display:flex; align-items:center; gap:6px;
+        }
+        .sync-status.syncing { background:#fff3e0; color:#e65100; }
+        .sync-status.error { background:#ffebee; color:#c62828; }
+        .sync-dot {
+            width:7px; height:7px; border-radius:50%; background:#4caf50;
+        }
+        .sync-status.syncing .sync-dot { background:#ff9800; animation:pulse 1s infinite; }
+        .sync-status.error .sync-dot { background:#f44336; }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+        /* ===== 側邊欄 ===== */
+        .sidebar {
+            width:260px; min-width:260px; background:#2d5f2d; color:#fff;
+            display:flex; flex-direction:column; height:100vh; transition:transform .3s;
+        }
+        .sidebar-header { padding:20px; border-bottom:1px solid rgba(255,255,255,.15); }
+        .sidebar-header h1 { font-size:20px; font-weight:700; }
+        .btn-new {
+            width:100%; margin-top:14px; padding:10px;
+            background:rgba(255,255,255,.15); color:#fff;
+            border:1px dashed rgba(255,255,255,.4); border-radius:8px;
+            cursor:pointer; font-size:14px; transition:background .2s;
+        }
+        .btn-new:hover { background:rgba(255,255,255,.25); }
+
+        .search-box { padding:10px 20px; }
+        .search-input {
+            width:100%; padding:8px 12px; border:none; border-radius:6px;
+            font-size:13px; background:rgba(255,255,255,.15); color:#fff; outline:none;
+        }
+        .search-input::placeholder { color:rgba(255,255,255,.5); }
+        .search-input:focus { background:rgba(255,255,255,.25); }
+
+        .note-count { padding:4px 20px 8px; font-size:11px; opacity:.5; }
+
+        .note-list { flex:1; overflow-y:auto; padding:10px; }
+        .note-list::-webkit-scrollbar { width:4px; }
+        .note-list::-webkit-scrollbar-thumb { background:rgba(255,255,255,.3); border-radius:2px; }
+
+        .note-item {
+            padding:12px 14px; border-radius:8px; cursor:pointer;
+            margin-bottom:4px; transition:background .2s;
+            display:flex; justify-content:space-between; align-items:start;
+        }
+        .note-item:hover { background:rgba(255,255,255,.1); }
+        .note-item.active { background:rgba(255,255,255,.2); }
+        .note-item-info { flex:1; min-width:0; }
+        .note-item-title {
+            font-size:14px; font-weight:600;
+            white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+        }
+        .note-item-date { font-size:11px; opacity:.6; margin-top:3px; }
+        .note-item-delete {
+            background:none; border:none; color:rgba(255,255,255,.4);
+            cursor:pointer; font-size:16px; padding:0 0 0 8px;
+            line-height:1; transition:color .2s;
+        }
+        .note-item-delete:hover { color:#ff6b6b; }
+
+        .sidebar-footer {
+            padding:12px 16px; border-top:1px solid rgba(255,255,255,.15);
+            display:flex; flex-direction:column; gap:6px;
+        }
+        .btn-footer {
+            width:100%; padding:8px 10px;
+            background:rgba(255,255,255,.08); color:rgba(255,255,255,.75);
+            border:none; border-radius:6px; cursor:pointer;
+            font-size:12px; text-align:left; transition:all .2s;
+        }
+        .btn-footer:hover { background:rgba(255,255,255,.18); color:#fff; }
+        .sidebar-footer-note { font-size:10px; opacity:.4; text-align:center; padding-top:4px; }
+
+        /* ===== 主區域 ===== */
+        .main { flex:1; display:flex; flex-direction:column; height:100vh; overflow:hidden; }
+
+        .toolbar {
+            padding:14px 24px; background:#faf8f5;
+            border-bottom:1px solid #e0d8cc;
+            display:flex; align-items:center; gap:12px; flex-shrink:0;
+        }
+        .btn-sidebar-toggle {
+            display:none; background:none; border:none;
+            font-size:22px; cursor:pointer; color:#2d5f2d;
+        }
+        .toolbar-title-input {
+            flex:1; font-size:20px; font-weight:700;
+            border:none; background:transparent; color:#2c2c2c; outline:none;
+        }
+        .toolbar-title-input::placeholder { color:#b0a89e; }
+        .toolbar-actions { display:flex; gap:8px; align-items:center; }
+        .toolbar-date { font-size:13px; color:#8a8078; margin-right:8px; }
+        .btn-toolbar {
+            padding:7px 14px; border:1px solid #d4ccc2; background:#fff;
+            border-radius:6px; cursor:pointer; font-size:13px; color:#555;
+            transition:all .2s; display:flex; align-items:center; gap:5px;
+        }
+        .btn-toolbar:hover { background:#f0ebe3; border-color:#b8ae9e; }
+        .btn-toolbar.primary { background:#2d5f2d; color:#fff; border-color:#2d5f2d; }
+        .btn-toolbar.primary:hover { background:#245024; }
+        .tag-input {
+            padding:6px 10px; border:1px solid #d4ccc2; border-radius:6px;
+            font-size:13px; width:140px; outline:none; background:#fff;
+        }
+        .tag-input:focus { border-color:#2d5f2d; }
+
+        /* ===== 康乃爾筆記 ===== */
+        .cornell-container {
+            flex:1; display:flex; flex-direction:column;
+            padding:20px 24px; overflow:hidden;
+        }
+        .cornell-top {
+            flex:1; display:flex; min-height:0;
+            border:2px solid #c8b89a; border-bottom:none;
+            border-radius:12px 12px 0 0; overflow:hidden;
+        }
+        .cornell-cue {
+            width:30%; min-width:200px; background:#fdf6ec;
+            border-right:2px solid #c8b89a; display:flex; flex-direction:column;
+        }
+        .cornell-cue .section-label { background:#e8734a; color:#fff; }
+        .cornell-note { flex:1; background:#fafaf5; display:flex; flex-direction:column; }
+        .cornell-note .section-label { background:#2d5f2d; color:#fff; }
+        .cornell-summary {
+            height:140px; min-height:100px; background:#f5f0e8;
+            border:2px solid #c8b89a; border-radius:0 0 12px 12px;
+            display:flex; flex-direction:column; flex-shrink:0;
+        }
+        .cornell-summary .section-label { background:#6b5b4e; color:#fff; }
+
+        .section-label {
+            padding:8px 16px; font-size:12px; font-weight:700;
+            letter-spacing:1px; flex-shrink:0;
+        }
+        .cornell-textarea {
+            flex:1; width:100%; padding:14px 16px; border:none;
+            background:transparent; font-size:15px; line-height:1.8;
+            color:#2c2c2c; resize:none; outline:none; font-family:inherit;
+        }
+        .cornell-textarea::placeholder { color:#bbb4a8; font-style:italic; }
+        .cornell-cue .cornell-textarea { font-size:14px; line-height:2; }
+        .cornell-summary .cornell-textarea { font-size:14px; line-height:1.8; }
+
+        /* ===== 空狀態 ===== */
+        .empty-state {
+            flex:1; display:flex; flex-direction:column;
+            align-items:center; justify-content:center; color:#b0a89e;
+        }
+        .empty-state-icon { font-size:64px; margin-bottom:16px; }
+        .empty-state h2 { font-size:20px; margin-bottom:8px; color:#8a8078; }
+        .empty-state p { font-size:14px; }
+        .empty-state .btn-new-main {
+            margin-top:20px; padding:12px 28px; background:#2d5f2d;
+            color:#fff; border:none; border-radius:8px;
+            font-size:15px; cursor:pointer; transition:background .2s;
+        }
+        .empty-state .btn-new-main:hover { background:#245024; }
+
+        /* ===== Toast ===== */
+        .save-toast {
+            position:fixed; bottom:24px; right:24px; background:#2d5f2d;
+            color:#fff; padding:12px 24px; border-radius:8px; font-size:14px;
+            opacity:0; transform:translateY(10px); transition:all .3s;
+            pointer-events:none; z-index:999;
+        }
+        .save-toast.show { opacity:1; transform:translateY(0); }
+
+        /* ===== Modal ===== */
+        .modal-overlay {
+            display:none; position:fixed; top:0; left:0; width:100%; height:100%;
+            background:rgba(0,0,0,.4); z-index:1000;
+            align-items:center; justify-content:center;
+        }
+        .modal-overlay.show { display:flex; }
+        .modal {
+            background:#fff; border-radius:12px; padding:28px;
+            width:500px; max-width:90vw; max-height:80vh;
+            overflow-y:auto; box-shadow:0 20px 60px rgba(0,0,0,.2);
+        }
+        .modal h2 { margin-bottom:16px; font-size:18px; color:#2d5f2d; }
+        .modal pre {
+            background:#f5f0e8; padding:16px; border-radius:8px;
+            font-size:13px; white-space:pre-wrap; word-wrap:break-word;
+            max-height:400px; overflow-y:auto; line-height:1.6;
+        }
+        .modal-actions { margin-top:16px; display:flex; gap:8px; justify-content:flex-end; }
+        .modal-actions button {
+            padding:8px 20px; border-radius:6px; cursor:pointer;
+            font-size:14px; border:1px solid #d4ccc2; background:#fff;
+            color:#555; transition:all .2s;
+        }
+        .modal-actions button.primary { background:#2d5f2d; color:#fff; border-color:#2d5f2d; }
+        .modal-actions button:hover { opacity:.85; }
+
+        /* ===== RWD ===== */
+        @media (max-width:768px) {
+            .sidebar { position:fixed; z-index:100; transform:translateX(-100%); }
+            .sidebar.open { transform:translateX(0); }
+            .btn-sidebar-toggle { display:block; }
+            .cornell-top { flex-direction:column; }
+            .cornell-cue {
+                width:100%; min-width:unset; max-height:200px;
+                border-right:none; border-bottom:2px solid #c8b89a;
+            }
+            .toolbar { padding:10px 16px; }
+            .cornell-container { padding:12px 16px; }
+            .toolbar-date,.tag-input { display:none; }
+        }
+        .sidebar-overlay {
+            display:none; position:fixed; top:0; left:0;
+            width:100%; height:100%; background:rgba(0,0,0,.3); z-index:99;
+        }
+        .sidebar-overlay.show { display:block; }
+    </style>
+</head>
+<body>
+
+<!-- Loading -->
+<div class="loading-overlay" id="loadingOverlay">
+    <div class="spinner"></div>
+    <div class="loading-text">正在從 Google Sheets 載入筆記...</div>
+</div>
+
+<!-- 同步狀態 -->
+<div class="sync-status" id="syncStatus">
+    <div class="sync-dot"></div>
+    <span id="syncText">已同步</span>
+</div>
+
+<!-- 側邊欄 -->
+<aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+        <h1>📓 CornellNote</h1>
+        <button class="btn-new" onclick="createNote()">＋ 新增筆記</button>
+    </div>
+    <div class="search-box">
+        <input type="text" class="search-input" id="searchInput" placeholder="搜尋筆記..." oninput="renderNoteList()">
+    </div>
+    <div class="note-count" id="noteCount"></div>
+    <div class="note-list" id="noteList"></div>
+    <div class="sidebar-footer">
+        <button class="btn-footer" onclick="refreshFromCloud()">🔄 重新載入雲端資料</button>
+        <div class="sidebar-footer-note">資料即時同步至 Google Sheets</div>
+    </div>
+</aside>
+
+<div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
+
+<!-- 主區域 -->
+<main class="main">
+    <div class="empty-state" id="emptyState">
+        <div class="empty-state-icon">📓</div>
+        <h2>開始使用康乃爾筆記</h2>
+        <p>筆記會自動同步到你的 Google Sheets</p>
+        <button class="btn-new-main" onclick="createNote()">＋ 建立第一頁筆記</button>
+    </div>
+
+    <div id="editorArea" style="display:none; flex-direction:column; height:100%;">
+        <div class="toolbar">
+            <button class="btn-sidebar-toggle" onclick="toggleSidebar()">☰</button>
+            <input type="text" class="toolbar-title-input" id="titleInput" placeholder="輸入筆記標題..." oninput="autoSave()">
+            <div class="toolbar-actions">
+                <span class="toolbar-date" id="toolbarDate"></span>
+                <input type="text" class="tag-input" id="tagInput" placeholder="標籤 (逗號分隔)" oninput="autoSave()">
+                <button class="btn-toolbar" onclick="exportNoteTxt()">📄 匯出</button>
+                <button class="btn-toolbar primary" onclick="saveCurrentNote()">💾 儲存</button>
+            </div>
+        </div>
+        <div class="cornell-container">
+            <div class="cornell-top">
+                <div class="cornell-cue">
+                    <div class="section-label">🔑 關鍵字 / 問題 Cue</div>
+                    <textarea class="cornell-textarea" id="cueArea"
+                        placeholder="課後填寫&#10;&#10;• 寫下關鍵字&#10;• 提出問題&#10;• 整理重點提示" oninput="autoSave()"></textarea>
+                </div>
+                <div class="cornell-note">
+                    <div class="section-label">📝 筆記 Notes</div>
+                    <textarea class="cornell-textarea" id="noteArea"
+                        placeholder="上課 / 開會時即時記錄&#10;&#10;• 用簡短句子記錄重點&#10;• 不同重點之間留白區分&#10;• 可使用縮寫和符號加速" oninput="autoSave()"></textarea>
+                </div>
+            </div>
+            <div class="cornell-summary">
+                <div class="section-label">📋 總結 Summary</div>
+                <textarea class="cornell-textarea" id="summaryArea"
+                    placeholder="用自己的話，寫下 1-2 句重點總結..." oninput="autoSave()"></textarea>
+            </div>
+        </div>
+    </div>
+</main>
+
+<div class="save-toast" id="saveToast"></div>
+
+<!-- 匯出 Modal -->
+<div class="modal-overlay" id="exportModal">
+    <div class="modal">
+        <h2>📄 匯出筆記</h2>
+        <pre id="exportContent"></pre>
+        <div class="modal-actions">
+            <button onclick="closeModal('exportModal')">關閉</button>
+            <button class="primary" onclick="copyExport()">📋 複製</button>
+            <button class="primary" onclick="downloadTxt()">⬇️ 下載 .txt</button>
+        </div>
+    </div>
+</div>
+
+<script>
+// ===== 資料 =====
+let notes = [];
+let currentNoteId = null;
+let autoSaveTimer = null;
+
+// ===== 同步狀態 UI =====
+function setSyncStatus(status, text) {
+    const el = document.getElementById('syncStatus');
+    const t = document.getElementById('syncText');
+    el.className = 'sync-status' + (status !== 'ok' ? ' ' + status : '');
+    t.textContent = text;
+}
+
+// ===== 雲端 API 操作 =====
+
+// 從 Google Sheets 載入所有筆記
+async function fetchNotes() {
+    setSyncStatus('syncing', '載入中...');
+    try {
+        const res = await fetch(API_URL);
+        const data = await res.json();
+        if (data.success) {
+            notes = data.notes.sort((a, b) =>
+                new Date(b.updatedAt) - new Date(a.updatedAt)
+            );
+            renderNoteList();
+            setSyncStatus('ok', '已同步');
+        } else {
+            throw new Error(data.error);
+        }
+    } catch (err) {
+        setSyncStatus('error', '載入失敗');
+        console.error('Fetch error:', err);
+        // 嘗試用本地快取
+        try {
+            notes = JSON.parse(localStorage.getItem('cornell_cache')) || [];
+            renderNoteList();
+            showToast('⚠️ 雲端連線失敗，使用本地快取');
+        } catch(e) {}
+    }
+}
+
+// 儲存單則筆記到 Google Sheets
+async function saveToCloud(note) {
+    setSyncStatus('syncing', '同步中...');
+    try {
+        const res = await fetch(API_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain' },
+            body: JSON.stringify({ action: 'save', note: note })
+        });
+        const data = await res.json();
+        if (data.success) {
+            setSyncStatus('ok', '已同步');
+            // 更新本地快取
+            localStorage.setItem('cornell_cache', JSON.stringify(notes));
+        } else {
+            throw new Error(data.error);
+        }
+    } catch (err) {
+        setSyncStatus('error', '同步失敗');
+        console.error('Save error:', err);
+        showToast('⚠️ 同步失敗，資料已存本地');
+        localStorage.setItem('cornell_cache', JSON.stringify(notes));
+    }
+}
+
+// 從 Google Sheets 刪除筆記
+async function deleteFromCloud(id) {
+    setSyncStatus('syncing', '同步中...');
+    try {
+        await fetch(API_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain' },
+            body: JSON.stringify({ action: 'delete', id: id })
+        });
+        setSyncStatus('ok', '已同步');
+        localStorage.setItem('cornell_cache', JSON.stringify(notes));
+    } catch (err) {
+        setSyncStatus('error', '同步失敗');
+    }
+}
+
+// ===== CRUD =====
+
+function getCurrentNote() {
+    return notes.find(n => n.id === currentNoteId);
+}
+
+function createNote() {
+    const now = new Date();
+    const note = {
+        id: Date.now().toString() + Math.random().toString(36).substr(2, 4),
+        title: '',
+        tags: '',
+        cue: '',
+        content: '',
+        summary: '',
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString()
+    };
+    notes.unshift(note);
+    saveToCloud(note);
+    selectNote(note.id);
+    renderNoteList();
+    closeSidebarMobile();
+    setTimeout(() => document.getElementById('titleInput').focus(), 100);
+}
+
+function selectNote(id) {
+    currentNoteId = id;
+    const note = getCurrentNote();
+    if (!note) return;
+    document.getElementById('titleInput').value = note.title;
+    document.getElementById('tagInput').value = note.tags || '';
+    document.getElementById('cueArea').value = note.cue;
+    document.getElementById('noteArea').value = note.content;
+    document.getElementById('summaryArea').value = note.summary;
+    document.getElementById('toolbarDate').textContent = formatDate(note.updatedAt);
+    document.getElementById('emptyState').style.display = 'none';
+    document.getElementById('editorArea').style.display = 'flex';
+    renderNoteList();
+    closeSidebarMobile();
+}
+
+function saveCurrentNote() {
+    const note = getCurrentNote();
+    if (!note) return;
+    note.title = document.getElementById('titleInput').value;
+    note.tags = document.getElementById('tagInput').value;
+    note.cue = document.getElementById('cueArea').value;
+    note.content = document.getElementById('noteArea').value;
+    note.summary = document.getElementById('summaryArea').value;
+    note.updatedAt = new Date().toISOString();
+    document.getElementById('toolbarDate').textContent = formatDate(note.updatedAt);
+    saveToCloud(note);
+    renderNoteList();
+    showToast('✅ 已儲存並同步');
+}
+
+function autoSave() {
+    clearTimeout(autoSaveTimer);
+    autoSaveTimer = setTimeout(() => {
+        const note = getCurrentNote();
+        if (!note) return;
+        note.title = document.getElementById('titleInput').value;
+        note.tags = document.getElementById('tagInput').value;
+        note.cue = document.getElementById('cueArea').value;
+        note.content = document.getElementById('noteArea').value;
+        note.summary = document.getElementById('summaryArea').value;
+        note.updatedAt = new Date().toISOString();
+        saveToCloud(note);
+        renderNoteList();
+    }, 2000); // 2秒後自動同步，避免太頻繁
+}
+
+function deleteNote(id, event) {
+    event.stopPropagation();
+    if (!confirm('確定要刪除這則筆記嗎？')) return;
+    notes = notes.filter(n => n.id !== id);
+    deleteFromCloud(id);
+    if (currentNoteId === id) {
+        currentNoteId = null;
+        document.getElementById('editorArea').style.display = 'none';
+        document.getElementById('emptyState').style.display = 'flex';
+    }
+    renderNoteList();
+}
+
+function refreshFromCloud() {
+    fetchNotes().then(() => {
+        if (currentNoteId) {
+            const note = getCurrentNote();
+            if (note) selectNote(note.id);
+            else {
+                currentNoteId = null;
+                document.getElementById('editorArea').style.display = 'none';
+                document.getElementById('emptyState').style.display = 'flex';
+            }
+        }
+        showToast('🔄 已重新載入');
+    });
+}
+
+// ===== 列表渲染 =====
+function renderNoteList() {
+    const list = document.getElementById('noteList');
+    const search = document.getElementById('searchInput').value.toLowerCase();
+    const filtered = notes.filter(n => {
+        if (!search) return true;
+        return (n.title+n.cue+n.content+n.summary+n.tags).toLowerCase().includes(search);
+    });
+    document.getElementById('noteCount').textContent = `共 ${notes.length} 則筆記`;
+    if (filtered.length === 0) {
+        list.innerHTML = '<div style="text-align:center;padding:30px 10px;opacity:.5;font-size:13px;">'
+            + (notes.length === 0 ? '尚無筆記' : '找不到符合的筆記') + '</div>';
+        return;
+    }
+    list.innerHTML = filtered.map(n => `
+        <div class="note-item ${n.id===currentNoteId?'active':''}" onclick="selectNote('${n.id}')">
+            <div class="note-item-info">
+                <div class="note-item-title">${escapeHtml(n.title)||'未命名筆記'}</div>
+                <div class="note-item-date">${formatDateShort(n.updatedAt)}${n.tags?' · '+escapeHtml(n.tags.split(',')[0].trim()):''}</div>
+            </div>
+            <button class="note-item-delete" onclick="deleteNote('${n.id}',event)">✕</button>
+        </div>`).join('');
+}
+
+// ===== 匯出 =====
+function exportNoteTxt() {
+    const note = getCurrentNote();
+    if (!note) return;
+    const title = note.title || '未命名筆記';
+    const line = '═'.repeat(50);
+    const div = '─'.repeat(50);
+    const text = `${line}\n 康乃爾筆記 — ${title}\n${line}\n 日期：${formatDate(note.updatedAt)}\n 標籤：${note.tags||'無'}\n${line}\n\n🔑 關鍵字 / 問題\n${div}\n${note.cue||'（無內容）'}\n\n📝 筆記內容\n${div}\n${note.content||'（無內容）'}\n\n📋 總結\n${div}\n${note.summary||'（無內容）'}\n\n${line}\n 由 CornellNote App 匯出\n${line}`;
+    document.getElementById('exportContent').textContent = text;
+    document.getElementById('exportModal').classList.add('show');
+}
+
+function copyExport() {
+    navigator.clipboard.writeText(document.getElementById('exportContent').textContent)
+        .then(() => { showToast('📋 已複製'); closeModal('exportModal'); });
+}
+
+function downloadTxt() {
+    const note = getCurrentNote();
+    const text = document.getElementById('exportContent').textContent;
+    const blob = new Blob([text], {type:'text/plain;charset=utf-8'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = (note.title||'未命名筆記')+'.txt'; a.click();
+    URL.revokeObjectURL(url);
+    closeModal('exportModal');
+}
+
+// ===== 工具 =====
+function showToast(msg) {
+    const t = document.getElementById('saveToast');
+    t.textContent = msg; t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 2000);
+}
+function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+
+function formatDate(iso) {
+    if (!iso) return '';
+    return new Date(iso).toLocaleDateString('zh-TW',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+}
+function formatDateShort(iso) {
+    if (!iso) return '';
+    const diff = Date.now() - new Date(iso);
+    if (diff<60000) return '剛剛';
+    if (diff<3600000) return Math.floor(diff/60000)+' 分鐘前';
+    if (diff<86400000) return Math.floor(diff/3600000)+' 小時前';
+    if (diff<604800000) return Math.floor(diff/86400000)+' 天前';
+    return new Date(iso).toLocaleDateString('zh-TW',{month:'short',day:'numeric'});
+}
+function escapeHtml(str) {
+    if (!str) return '';
+    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function toggleSidebar() {
+    document.getElementById('sidebar').classList.toggle('open');
+    document.getElementById('sidebarOverlay').classList.toggle('show');
+}
+function closeSidebarMobile() {
+    if (window.innerWidth<=768) {
+        document.getElementById('sidebar').classList.remove('open');
+        document.getElementById('sidebarOverlay').classList.remove('show');
+    }
+}
+
+// 快捷鍵
+document.addEventListener('keydown', e => {
+    if ((e.ctrlKey||e.metaKey) && e.key==='s') { e.preventDefault(); saveCurrentNote(); }
+    if ((e.ctrlKey||e.metaKey) && e.key==='n') { e.preventDefault(); createNote(); }
+});
+
+document.getElementById('exportModal').addEventListener('click', e => {
+    if (e.target === document.getElementById('exportModal')) closeModal('exportModal');
+});
+
+// ===== 初始化 =====
+fetchNotes().then(() => {
+    document.getElementById('loadingOverlay').classList.add('hidden');
+    if (notes.length > 0) selectNote(notes[0].id);
+});
+</script>
+
+</body>
+</html>
